@@ -2321,7 +2321,7 @@ BEGIN
                     COALESCE(SUM(range_end-range_start) FILTER(WHERE is_compressed), INTERVAL '0') AS compressed_interval,
                     COALESCE(SUM(range_end-range_start), INTERVAL '0') AS total_interval
                 FROM timescaledb_information.chunks c
-                WHERE hypertable_schema='prom_data'
+                WHERE hypertable_schema='SCHEMA_DATA'
                 GROUP BY hypertable_schema, hypertable_name
             )
             SELECT
@@ -2345,11 +2345,11 @@ BEGIN
                 hcs.total_chunks::BIGINT,
                 hcs.number_compressed_chunks::BIGINT as compressed_chunks
             FROM SCHEMA_CATALOG.metric m
-            LEFT JOIN SCHEMA_CATALOG.hypertable_local_size('prom_data') pcmvl ON (pcmvl.hypertable_name = m.table_name)
-            LEFT JOIN SCHEMA_CATALOG.hypertable_remote_size('prom_data') pcmvd ON (pcmvd.hypertable_name = m.table_name)
+            LEFT JOIN SCHEMA_CATALOG.hypertable_local_size('SCHEMA_DATA') pcmvl ON (pcmvl.hypertable_name = m.table_name)
+            LEFT JOIN SCHEMA_CATALOG.hypertable_remote_size('SCHEMA_DATA') pcmvd ON (pcmvd.hypertable_name = m.table_name)
             LEFT JOIN timescaledb_information.dimensions dims ON
-                (dims.hypertable_schema = 'prom_data' AND dims.hypertable_name = m.table_name)
-            LEFT JOIN SCHEMA_CATALOG.hypertable_compression_stats('prom_data') hcs ON (hcs.hypertable_name = m.table_name)
+                (dims.hypertable_schema = 'SCHEMA_DATA' AND dims.hypertable_name = m.table_name)
+            LEFT JOIN SCHEMA_CATALOG.hypertable_compression_stats('SCHEMA_DATA') hcs ON (hcs.hypertable_name = m.table_name)
             LEFT JOIN ci ON (ci.hypertable_name = m.table_name)
             ;
         ELSE

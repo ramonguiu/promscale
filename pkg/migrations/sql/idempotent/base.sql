@@ -2408,7 +2408,7 @@ BEGIN
         END IF;
 END
 $func$
-LANGUAGE PLPGSQL VOLATILE
+LANGUAGE PLPGSQL STABLE
 SECURITY DEFINER
 --search path must be set for security definer
 --need to include public(the timescaledb schema) for some timescale functions to work.

@@ -2123,6 +2123,146 @@ SET search_path = pg_temp;
 REVOKE ALL ON FUNCTION SCHEMA_CATALOG.delete_series_from_metric(text, bigint[])FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.delete_series_from_metric(text, bigint[]) to prom_modifier;
 
+
+CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_local_size(schema_name_in name)
+RETURNS TABLE(hypertable_name name, table_bytes bigint, index_bytes bigint, toast_bytes bigint, total_bytes bigint)
+AS $function$
+        SELECT
+            ch.hypertable_name,
+            (COALESCE(sum(ch.total_bytes), 0) - COALESCE(sum(ch.index_bytes), 0) - COALESCE(sum(ch.toast_bytes), 0) + COALESCE(sum(ch.compressed_heap_size), 0))::bigint + pg_relation_size(format('%I.%I', ch.hypertable_schema, ch.hypertable_name)::regclass)::bigint AS heap_bytes,
+            (COALESCE(sum(ch.index_bytes), 0) + COALESCE(sum(ch.compressed_index_size), 0))::bigint + pg_indexes_size(format('%I.%I', ch.hypertable_schema, ch.hypertable_name)::regclass)::bigint AS index_bytes,
+            (COALESCE(sum(ch.toast_bytes), 0) + COALESCE(sum(ch.compressed_toast_size), 0))::bigint AS toast_bytes,
+            (COALESCE(sum(ch.total_bytes), 0) + COALESCE(sum(ch.compressed_total_size), 0))::bigint + pg_total_relation_size(format('%I.%I', ch.hypertable_schema, ch.hypertable_name)::regclass)::bigint AS total_bytes
+        FROM
+            _timescaledb_internal.hypertable_chunk_local_size ch
+        WHERE ch.hypertable_schema = schema_name_in
+        GROUP BY ch.hypertable_name, ch.hypertable_schema
+$function$
+LANGUAGE sql STRICT STABLE 
+SECURITY DEFINER
+--search path must be set for security definer
+SET search_path = pg_temp;
+REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_local_size(name) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_local_size(name) to prom_modifier;
+
+CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_node_up(schema_name_in name)
+RETURNS TABLE(hypertable_name name, node_name name, node_up boolean)
+AS $function$
+    -- list of distributed hypertables and whether or not the associated data node is up
+    -- only ping each distinct data node once and no more
+    -- there is no guarantee that a node will stay "up" for the duration of a transaction
+    -- but we don't want to pay the penalty of asking more than once, so we mark this
+    -- function as stable to allow the results to be cached
+    WITH dht AS MATERIALIZED (
+        -- list of distributed hypertables
+        SELECT
+            ht.table_name,
+            s.node_name
+        FROM _timescaledb_catalog.hypertable ht
+        JOIN _timescaledb_catalog.hypertable_data_node s ON (
+            ht.replication_factor > 0 AND s.hypertable_id = ht.id
+        )
+        WHERE ht.schema_name = schema_name_in
+    ),
+    up AS MATERIALIZED (
+        -- list of nodes we care about and whether they are up
+        SELECT
+            x.node_name,
+            _timescaledb_internal.ping_data_node(x.node_name) AS node_up
+        FROM (
+            SELECT DISTINCT dht.node_name -- only ping each node once
+            FROM dht
+        ) x
+    )
+    SELECT
+        dht.table_name as hypertable_name,
+        dht.node_name,
+        up.node_up
+    FROM dht
+    JOIN up ON (dht.node_name = up.node_name)
+$function$
+LANGUAGE sql
+STRICT STABLE 
+SECURITY DEFINER
+--search path must be set for security definer
+SET search_path = pg_temp;
+REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_node_up(name) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_node_up(name) to prom_modifier;
+
+CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_remote_size(schema_name_in name)
+RETURNS TABLE(hypertable_name name, node_name name, table_bytes bigint, index_bytes bigint, toast_bytes bigint, total_bytes bigint)
+AS $function$
+    SELECT
+        dht.hypertable_name,
+        dht.node_name,
+        sum(x.table_bytes)::bigint AS table_bytes,
+        sum(x.index_bytes)::bigint AS index_bytes,
+        sum(x.toast_bytes)::bigint AS toast_bytes,
+        sum(x.total_bytes)::bigint AS total_bytes
+    FROM SCHEMA_CATALOG.hypertable_node_up(schema_name_in) dht
+    LEFT OUTER JOIN LATERAL _timescaledb_internal.data_node_hypertable_info(
+        CASE WHEN dht.node_up THEN
+            dht.node_name
+        ELSE
+            NULL
+        END, schema_name_in, dht.hypertable_name) x ON true
+    GROUP BY dht.hypertable_name, dht.node_name
+$function$
+LANGUAGE sql
+STRICT STABLE 
+SECURITY DEFINER
+--search path must be set for security definer
+SET search_path = pg_temp;
+REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_remote_size(name) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_remote_size(name) to prom_modifier;
+
+CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(schema_name_in name)
+RETURNS TABLE(hypertable_name name, total_chunks bigint, number_compressed_chunks bigint, before_compression_total_bytes bigint, after_compression_total_bytes bigint)
+AS $function$
+    SELECT
+        ch.hypertable_name,
+        count(*)::bigint AS total_chunks,
+        (count(*) FILTER (WHERE ch.compression_status = 'Compressed'))::bigint AS number_compressed_chunks,
+        sum(ch.before_compression_total_bytes)::bigint AS before_compression_total_bytes,
+        sum(ch.after_compression_total_bytes)::bigint AS after_compression_total_bytes
+    FROM
+    (
+        -- local hypertables
+        SELECT
+            ch.hypertable_name,
+            ch.compression_status,
+            ch.uncompressed_total_size AS before_compression_total_bytes,
+            ch.compressed_total_size AS after_compression_total_bytes,
+            NULL::text AS node_name
+        FROM _timescaledb_internal.compressed_chunk_stats ch
+        WHERE ch.hypertable_schema = schema_name_in
+        UNION ALL
+        -- distributed hypertables
+        SELECT
+            dht.hypertable_name,
+            ch.compression_status,
+            ch.before_compression_total_bytes,
+            ch.after_compression_total_bytes,
+            dht.node_name
+        FROM SCHEMA_CATALOG.hypertable_node_up(schema_name_in) dht
+        LEFT OUTER JOIN LATERAL _timescaledb_internal.data_node_compressed_chunk_stats (
+            CASE WHEN dht.node_up THEN
+                dht.node_name
+            ELSE
+                NULL
+            END, schema_name_in, dht.hypertable_name) ch ON true
+        WHERE ch.chunk_name IS NOT NULL
+    ) ch
+    GROUP BY ch.hypertable_name
+$function$
+LANGUAGE sql
+STRICT STABLE 
+SECURITY DEFINER
+--search path must be set for security definer
+SET search_path = pg_temp;
+REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(name) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(name) to prom_modifier;
+
 --------------------------------- Views --------------------------------
 
 CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.metric_view()
@@ -2174,124 +2314,14 @@ BEGIN
         END IF;
 
         IF SCHEMA_CATALOG.get_timescale_major_version() >= 2 THEN
-            -- in large databases we need to rely on parallelism to get performance
-            -- CREATE TABLE AS can take advantage of parallelism
-            -- embedding these temp tables as CTEs or subqueries instead seems to 
-            -- cause the planner to stop using parallelism
-
-            -- local hypertable sizes
-            DROP TABLE IF EXISTS _prom_catalog_metric_view_local_size;
-            CREATE TEMPORARY TABLE _prom_catalog_metric_view_local_size
-            ON COMMIT DROP AS
-            SELECT
-                ch.hypertable_name AS table_name,
-                (COALESCE(sum(ch.total_bytes), 0) + COALESCE(sum(ch.compressed_total_size), 0))::bigint + pg_total_relation_size(format('%I.%I', ch.hypertable_schema, ch.hypertable_name)::regclass)::bigint AS total_bytes
-            FROM _timescaledb_internal.hypertable_chunk_local_size ch
-            WHERE ch.hypertable_schema = 'SCHEMA_DATA'
-            GROUP BY ch.hypertable_name, ch.hypertable_schema
-            ;
-
-            -- list of distributed hypertables and whether or not the associated data node is up
-            -- only ping each distinct data node once and no more
-            DROP TABLE IF EXISTS _prom_catalog_metric_view_dht;
-            CREATE TEMPORARY TABLE _prom_catalog_metric_view_dht
-            ON COMMIT DROP AS
-            WITH dht AS MATERIALIZED (
-                -- list of distributed hypertables
-                SELECT
-                    ht.table_name,
-                    s.node_name
-                FROM _timescaledb_catalog.hypertable ht
-                JOIN _timescaledb_catalog.hypertable_data_node s ON (
-                    ht.replication_factor > 0 AND s.hypertable_id = ht.id
-                )
-                WHERE ht.schema_name = 'SCHEMA_DATA'
-            ),
-            up AS MATERIALIZED (
-                -- list of nodes we care about and whether they are up
-                SELECT
-                    x.node_name,
-                    _timescaledb_internal.ping_data_node(x.node_name) AS node_up
-                FROM (
-                    SELECT DISTINCT dht.node_name -- only ping each node once
-                    FROM dht
-                ) x
-            )
-            SELECT
-                dht.table_name,
-                dht.node_name,
-                up.node_up
-            FROM dht
-            JOIN up ON (dht.node_name = up.node_name)
-            ;
-
-            -- distributed hypertable sizes
-            DROP TABLE IF EXISTS _prom_catalog_metric_view_dist_size;
-            CREATE TEMPORARY TABLE _prom_catalog_metric_view_dist_size 
-            ON COMMIT DROP AS
-            SELECT
-                dht.node_name,
-                dht.table_name,
-                sum(x.total_bytes)::bigint AS total_bytes
-            FROM _prom_catalog_metric_view_dht dht
-            LEFT OUTER JOIN LATERAL _timescaledb_internal.data_node_hypertable_info(
-                CASE WHEN dht.node_up THEN
-                    dht.node_name
-                ELSE
-                    NULL
-                END, 'SCHEMA_DATA', dht.table_name) x ON true
-            GROUP BY dht.table_name, dht.node_name
-            ;
-
-            -- compression stats
-            DROP TABLE IF EXISTS _prom_catalog_metric_view_comp_stats;
-            CREATE TEMPORARY TABLE _prom_catalog_metric_view_comp_stats
-            ON COMMIT DROP AS
-            SELECT
-                ch.table_name,
-                count(*)::bigint AS total_chunks,
-                (count(*) FILTER (WHERE ch.compression_status = 'Compressed'))::bigint AS number_compressed_chunks,
-                sum(ch.before_compression_total_bytes)::bigint AS before_compression_total_bytes,
-                sum(ch.after_compression_total_bytes)::bigint AS after_compression_total_bytes
-            FROM
-            (
-                -- local hypertables
-                SELECT
-                    ch.hypertable_name AS table_name,
-                    ch.compression_status,
-                    ch.uncompressed_total_size AS before_compression_total_bytes,
-                    ch.compressed_total_size AS after_compression_total_bytes,
-                    NULL::text AS node_name
-                FROM _timescaledb_internal.compressed_chunk_stats ch
-                WHERE ch.hypertable_schema = 'SCHEMA_DATA'
-                UNION ALL
-                -- distributed hypertables
-                SELECT
-                    dht.table_name,
-                    ch.compression_status,
-                    ch.before_compression_total_bytes,
-                    ch.after_compression_total_bytes,
-                    dht.node_name
-                FROM _prom_catalog_metric_view_dht dht
-                LEFT OUTER JOIN LATERAL _timescaledb_internal.data_node_compressed_chunk_stats (
-                    CASE WHEN dht.node_up THEN
-                        dht.node_name
-                    ELSE
-                        NULL
-                    END, 'SCHEMA_DATA', dht.table_name) ch ON true
-                WHERE ch.chunk_name IS NOT NULL
-            ) ch
-            GROUP BY ch.table_name
-            ;
-
             RETURN QUERY
             WITH ci AS (
                 SELECT
-                    hypertable_name as table_name,
+                    hypertable_name as hypertable_name,
                     COALESCE(SUM(range_end-range_start) FILTER(WHERE is_compressed), INTERVAL '0') AS compressed_interval,
                     COALESCE(SUM(range_end-range_start), INTERVAL '0') AS total_interval
                 FROM timescaledb_information.chunks c
-                WHERE hypertable_schema='SCHEMA_DATA'
+                WHERE hypertable_schema='prom_data'
                 GROUP BY hypertable_schema, hypertable_name
             )
             SELECT
@@ -2315,12 +2345,12 @@ BEGIN
                 hcs.total_chunks::BIGINT,
                 hcs.number_compressed_chunks::BIGINT as compressed_chunks
             FROM SCHEMA_CATALOG.metric m
-            LEFT JOIN _prom_catalog_metric_view_local_size pcmvl ON (pcmvl.table_name = m.table_name)
-            LEFT JOIN _prom_catalog_metric_view_dist_size pcmvd ON (pcmvd.table_name = m.table_name)
+            LEFT JOIN SCHEMA_CATALOG.hypertable_local_size('prom_data') pcmvl ON (pcmvl.hypertable_name = m.table_name)
+            LEFT JOIN SCHEMA_CATALOG.hypertable_remote_size('prom_data') pcmvd ON (pcmvd.hypertable_name = m.table_name)
             LEFT JOIN timescaledb_information.dimensions dims ON
-                (dims.hypertable_schema = 'SCHEMA_DATA' AND dims.hypertable_name = m.table_name)
-            LEFT JOIN _prom_catalog_metric_view_comp_stats hcs ON (hcs.table_name = m.table_name)
-            LEFT JOIN ci ON (ci.table_name = m.table_name)
+                (dims.hypertable_schema = 'prom_data' AND dims.hypertable_name = m.table_name)
+            LEFT JOIN SCHEMA_CATALOG.hypertable_compression_stats('prom_data') hcs ON (hcs.hypertable_name = m.table_name)
+            LEFT JOIN ci ON (ci.hypertable_name = m.table_name)
             ;
         ELSE
             RETURN QUERY
@@ -2352,29 +2382,29 @@ BEGIN
                     chs.number_compressed_chunks as compressed_chunks
                 FROM _prom_catalog.metric m
                     LEFT JOIN timescaledb_information.hypertable hi ON
-                (hi.table_schema = 'prom_data' AND hi.table_name = m.table_name)
+                        (hi.table_schema = 'prom_data' AND hi.table_name = m.table_name)
                     LEFT JOIN timescaledb_information.compressed_hypertable_stats chs ON
-                (chs.hypertable_name = format('%I.%I', 'prom_data', m.table_name)::regclass)
+                        (chs.hypertable_name = format('%I.%I', 'prom_data', m.table_name)::regclass)
                     LEFT JOIN _timescaledb_catalog.hypertable h ON
-                (h.schema_name = 'prom_data' AND h.table_name = m.table_name)
+                        (h.schema_name = 'prom_data' AND h.table_name = m.table_name)
                     LEFT JOIN LATERAL
-                (
-                    SELECT COALESCE(
-                        SUM(
-                            UPPER(rs.ranges[1]::TSTZRANGE) - LOWER(rs.ranges[1]::TSTZRANGE)
-                        ),
-                        INTERVAL '0'
-                    ) total_interval,
-                    COALESCE(
-                        SUM(
-                            UPPER(rs.ranges[1]::TSTZRANGE) - LOWER(rs.ranges[1]::TSTZRANGE)
-                        ) FILTER (WHERE cs.compression_status = 'Compressed'),
-                        INTERVAL '0'
-                    ) compressed_interval
-                        FROM SCHEMA_TIMESCALE.chunk_relation_size_pretty(FORMAT('prom_data.%I', m.table_name)) rs
-                        LEFT JOIN timescaledb_information.compressed_chunk_stats cs ON
-                    (cs.chunk_name::text = rs.chunk_table::text)
-                ) as ci ON TRUE;
+                        (
+                            SELECT COALESCE(
+                                    SUM(
+                                        UPPER(rs.ranges[1]::TSTZRANGE) - LOWER(rs.ranges[1]::TSTZRANGE)
+                                    ),
+                                    INTERVAL '0'
+                                ) total_interval,
+                                COALESCE(
+                                    SUM(
+                                        UPPER(rs.ranges[1]::TSTZRANGE) - LOWER(rs.ranges[1]::TSTZRANGE)
+                                    ) FILTER (WHERE cs.compression_status = 'Compressed'),
+                                    INTERVAL '0'
+                                ) compressed_interval
+                            FROM SCHEMA_TIMESCALE.chunk_relation_size_pretty(FORMAT('prom_data.%I', m.table_name)) rs
+                            LEFT JOIN timescaledb_information.compressed_chunk_stats cs ON
+                                (cs.chunk_name::text = rs.chunk_table::text)
+                        ) as ci ON TRUE;
         END IF;
 END
 $func$

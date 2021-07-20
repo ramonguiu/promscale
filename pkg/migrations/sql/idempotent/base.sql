@@ -2174,7 +2174,7 @@ SECURITY DEFINER
 --search path must be set for security definer
 SET search_path = pg_temp;
 REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_local_size(name) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_local_size(name) to prom_modifier;
+GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_local_size(name) to prom_reader;
 
 CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_node_up(schema_name_in name)
 RETURNS TABLE(hypertable_name name, node_name name, node_up boolean)

@@ -2156,7 +2156,7 @@ GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.delete_series_from_metric(text, bigint[
 
 DO $block$
 BEGIN
-    IF SCHEMA_CATALOG.is_timescaledb_installed() THEN
+    IF SCHEMA_CATALOG.is_timescaledb_installed() AND SCHEMA_CATALOG.get_timescale_major_version() >= 2 THEN
         CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_local_size(schema_name_in name)
         RETURNS TABLE(hypertable_name name, table_bytes bigint, index_bytes bigint, toast_bytes bigint, total_bytes bigint)
         AS $function$
@@ -2184,7 +2184,7 @@ $block$
 
 DO $block$
 BEGIN
-    IF SCHEMA_CATALOG.is_timescaledb_installed() THEN
+    IF SCHEMA_CATALOG.is_timescaledb_installed() AND SCHEMA_CATALOG.get_timescale_major_version() >= 2 THEN
         CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_node_up(schema_name_in name)
         RETURNS TABLE(hypertable_name name, node_name name, node_up boolean)
         AS $function$
@@ -2235,7 +2235,7 @@ $block$
 
 DO $block$
 BEGIN
-    IF SCHEMA_CATALOG.is_timescaledb_installed() THEN
+    IF SCHEMA_CATALOG.is_timescaledb_installed() AND SCHEMA_CATALOG.get_timescale_major_version() >= 2 THEN
         CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_remote_size(schema_name_in name)
         RETURNS TABLE(hypertable_name name, table_bytes bigint, index_bytes bigint, toast_bytes bigint, total_bytes bigint)
         AS $function$
@@ -2268,7 +2268,7 @@ $block$
 
 DO $block$
 BEGIN
-    IF SCHEMA_CATALOG.is_timescaledb_installed() THEN
+    IF SCHEMA_CATALOG.is_timescaledb_installed() AND SCHEMA_CATALOG.get_timescale_major_version() >= 2 THEN
         CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(schema_name_in name)
         RETURNS TABLE(hypertable_name name, total_chunks bigint, number_compressed_chunks bigint, before_compression_total_bytes bigint, after_compression_total_bytes bigint)
         AS $function$

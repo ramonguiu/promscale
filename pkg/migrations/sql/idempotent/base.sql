@@ -2292,7 +2292,7 @@ SECURITY DEFINER
 --search path must be set for security definer
 SET search_path = pg_temp;
 REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(name) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(name) to prom_modifier;
+GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(name) to prom_reader;
 
 --------------------------------- Views --------------------------------
 

@@ -2154,144 +2154,171 @@ SET search_path = pg_temp;
 REVOKE ALL ON FUNCTION SCHEMA_CATALOG.delete_series_from_metric(text, bigint[])FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.delete_series_from_metric(text, bigint[]) to prom_modifier;
 
+DO $block$
+BEGIN
+    IF SCHEMA_CATALOG.is_timescaledb_installed() THEN
+        CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_local_size(schema_name_in name)
+        RETURNS TABLE(hypertable_name name, table_bytes bigint, index_bytes bigint, toast_bytes bigint, total_bytes bigint)
+        AS $function$
+                SELECT
+                    ch.hypertable_name,
+                    (COALESCE(sum(ch.total_bytes), 0) - COALESCE(sum(ch.index_bytes), 0) - COALESCE(sum(ch.toast_bytes), 0) + COALESCE(sum(ch.compressed_heap_size), 0))::bigint + pg_relation_size(format('%I.%I', ch.hypertable_schema, ch.hypertable_name)::regclass)::bigint AS heap_bytes,
+                    (COALESCE(sum(ch.index_bytes), 0) + COALESCE(sum(ch.compressed_index_size), 0))::bigint + pg_indexes_size(format('%I.%I', ch.hypertable_schema, ch.hypertable_name)::regclass)::bigint AS index_bytes,
+                    (COALESCE(sum(ch.toast_bytes), 0) + COALESCE(sum(ch.compressed_toast_size), 0))::bigint AS toast_bytes,
+                    (COALESCE(sum(ch.total_bytes), 0) + COALESCE(sum(ch.compressed_total_size), 0))::bigint + pg_total_relation_size(format('%I.%I', ch.hypertable_schema, ch.hypertable_name)::regclass)::bigint AS total_bytes
+                FROM
+                    _timescaledb_internal.hypertable_chunk_local_size ch
+                WHERE ch.hypertable_schema = schema_name_in
+                GROUP BY ch.hypertable_name, ch.hypertable_schema
+        $function$
+        LANGUAGE sql STRICT STABLE 
+        SECURITY DEFINER
+        --search path must be set for security definer
+        SET search_path = pg_temp;
+        REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_local_size(name) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_local_size(name) to prom_reader;
+    END IF;
+END;
+$block$
+;
 
-CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_local_size(schema_name_in name)
-RETURNS TABLE(hypertable_name name, table_bytes bigint, index_bytes bigint, toast_bytes bigint, total_bytes bigint)
-AS $function$
-        SELECT
-            ch.hypertable_name,
-            (COALESCE(sum(ch.total_bytes), 0) - COALESCE(sum(ch.index_bytes), 0) - COALESCE(sum(ch.toast_bytes), 0) + COALESCE(sum(ch.compressed_heap_size), 0))::bigint + pg_relation_size(format('%I.%I', ch.hypertable_schema, ch.hypertable_name)::regclass)::bigint AS heap_bytes,
-            (COALESCE(sum(ch.index_bytes), 0) + COALESCE(sum(ch.compressed_index_size), 0))::bigint + pg_indexes_size(format('%I.%I', ch.hypertable_schema, ch.hypertable_name)::regclass)::bigint AS index_bytes,
-            (COALESCE(sum(ch.toast_bytes), 0) + COALESCE(sum(ch.compressed_toast_size), 0))::bigint AS toast_bytes,
-            (COALESCE(sum(ch.total_bytes), 0) + COALESCE(sum(ch.compressed_total_size), 0))::bigint + pg_total_relation_size(format('%I.%I', ch.hypertable_schema, ch.hypertable_name)::regclass)::bigint AS total_bytes
-        FROM
-            _timescaledb_internal.hypertable_chunk_local_size ch
-        WHERE ch.hypertable_schema = schema_name_in
-        GROUP BY ch.hypertable_name, ch.hypertable_schema
-$function$
-LANGUAGE sql STRICT STABLE 
-SECURITY DEFINER
---search path must be set for security definer
-SET search_path = pg_temp;
-REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_local_size(name) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_local_size(name) to prom_reader;
-
-CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_node_up(schema_name_in name)
-RETURNS TABLE(hypertable_name name, node_name name, node_up boolean)
-AS $function$
-    -- list of distributed hypertables and whether or not the associated data node is up
-    -- only ping each distinct data node once and no more
-    -- there is no guarantee that a node will stay "up" for the duration of a transaction
-    -- but we don't want to pay the penalty of asking more than once, so we mark this
-    -- function as stable to allow the results to be cached
-    WITH dht AS MATERIALIZED (
-        -- list of distributed hypertables
-        SELECT
-            ht.table_name,
-            s.node_name
-        FROM _timescaledb_catalog.hypertable ht
-        JOIN _timescaledb_catalog.hypertable_data_node s ON (
-            ht.replication_factor > 0 AND s.hypertable_id = ht.id
-        )
-        WHERE ht.schema_name = schema_name_in
-    ),
-    up AS MATERIALIZED (
-        -- list of nodes we care about and whether they are up
-        SELECT
-            x.node_name,
-            _timescaledb_internal.ping_data_node(x.node_name) AS node_up
-        FROM (
-            SELECT DISTINCT dht.node_name -- only ping each node once
+DO $block$
+BEGIN
+    IF SCHEMA_CATALOG.is_timescaledb_installed() THEN
+        CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_node_up(schema_name_in name)
+        RETURNS TABLE(hypertable_name name, node_name name, node_up boolean)
+        AS $function$
+            -- list of distributed hypertables and whether or not the associated data node is up
+            -- only ping each distinct data node once and no more
+            -- there is no guarantee that a node will stay "up" for the duration of a transaction
+            -- but we don't want to pay the penalty of asking more than once, so we mark this
+            -- function as stable to allow the results to be cached
+            WITH dht AS MATERIALIZED (
+                -- list of distributed hypertables
+                SELECT
+                    ht.table_name,
+                    s.node_name
+                FROM _timescaledb_catalog.hypertable ht
+                JOIN _timescaledb_catalog.hypertable_data_node s ON (
+                    ht.replication_factor > 0 AND s.hypertable_id = ht.id
+                )
+                WHERE ht.schema_name = schema_name_in
+            ),
+            up AS MATERIALIZED (
+                -- list of nodes we care about and whether they are up
+                SELECT
+                    x.node_name,
+                    _timescaledb_internal.ping_data_node(x.node_name) AS node_up
+                FROM (
+                    SELECT DISTINCT dht.node_name -- only ping each node once
+                    FROM dht
+                ) x
+            )
+            SELECT
+                dht.table_name as hypertable_name,
+                dht.node_name,
+                up.node_up
             FROM dht
-        ) x
-    )
-    SELECT
-        dht.table_name as hypertable_name,
-        dht.node_name,
-        up.node_up
-    FROM dht
-    JOIN up ON (dht.node_name = up.node_name)
-$function$
-LANGUAGE sql
-STRICT STABLE 
-SECURITY DEFINER
---search path must be set for security definer
-SET search_path = pg_temp;
-REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_node_up(name) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_node_up(name) to prom_reader;
+            JOIN up ON (dht.node_name = up.node_name)
+        $function$
+        LANGUAGE sql
+        STRICT STABLE 
+        SECURITY DEFINER
+        --search path must be set for security definer
+        SET search_path = pg_temp;
+        REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_node_up(name) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_node_up(name) to prom_reader;
+    END IF;
+END;
+$block$
+;
 
-CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_remote_size(schema_name_in name)
-RETURNS TABLE(hypertable_name name, table_bytes bigint, index_bytes bigint, toast_bytes bigint, total_bytes bigint)
-AS $function$
-    SELECT
-        dht.hypertable_name,
-        sum(x.table_bytes)::bigint AS table_bytes,
-        sum(x.index_bytes)::bigint AS index_bytes,
-        sum(x.toast_bytes)::bigint AS toast_bytes,
-        sum(x.total_bytes)::bigint AS total_bytes
-    FROM SCHEMA_CATALOG.hypertable_node_up(schema_name_in) dht
-    LEFT OUTER JOIN LATERAL _timescaledb_internal.data_node_hypertable_info(
-        CASE WHEN dht.node_up THEN
-            dht.node_name
-        ELSE
-            NULL
-        END, schema_name_in, dht.hypertable_name) x ON true
-    GROUP BY dht.hypertable_name
-$function$
-LANGUAGE sql
-STRICT STABLE 
-SECURITY DEFINER
---search path must be set for security definer
-SET search_path = pg_temp;
-REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_remote_size(name) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_remote_size(name) to prom_reader;
+DO $block$
+BEGIN
+    IF SCHEMA_CATALOG.is_timescaledb_installed() THEN
+        CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_remote_size(schema_name_in name)
+        RETURNS TABLE(hypertable_name name, table_bytes bigint, index_bytes bigint, toast_bytes bigint, total_bytes bigint)
+        AS $function$
+            SELECT
+                dht.hypertable_name,
+                sum(x.table_bytes)::bigint AS table_bytes,
+                sum(x.index_bytes)::bigint AS index_bytes,
+                sum(x.toast_bytes)::bigint AS toast_bytes,
+                sum(x.total_bytes)::bigint AS total_bytes
+            FROM SCHEMA_CATALOG.hypertable_node_up(schema_name_in) dht
+            LEFT OUTER JOIN LATERAL _timescaledb_internal.data_node_hypertable_info(
+                CASE WHEN dht.node_up THEN
+                    dht.node_name
+                ELSE
+                    NULL
+                END, schema_name_in, dht.hypertable_name) x ON true
+            GROUP BY dht.hypertable_name
+        $function$
+        LANGUAGE sql
+        STRICT STABLE 
+        SECURITY DEFINER
+        --search path must be set for security definer
+        SET search_path = pg_temp;
+        REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_remote_size(name) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_remote_size(name) to prom_reader;
+    END IF;
+END;
+$block$
+;
 
-CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(schema_name_in name)
-RETURNS TABLE(hypertable_name name, total_chunks bigint, number_compressed_chunks bigint, before_compression_total_bytes bigint, after_compression_total_bytes bigint)
-AS $function$
-    SELECT
-        ch.hypertable_name,
-        count(*)::bigint AS total_chunks,
-        (count(*) FILTER (WHERE ch.compression_status = 'Compressed'))::bigint AS number_compressed_chunks,
-        sum(ch.before_compression_total_bytes)::bigint AS before_compression_total_bytes,
-        sum(ch.after_compression_total_bytes)::bigint AS after_compression_total_bytes
-    FROM
-    (
-        -- local hypertables
-        SELECT
-            ch.hypertable_name,
-            ch.compression_status,
-            ch.uncompressed_total_size AS before_compression_total_bytes,
-            ch.compressed_total_size AS after_compression_total_bytes,
-            NULL::text AS node_name
-        FROM _timescaledb_internal.compressed_chunk_stats ch
-        WHERE ch.hypertable_schema = schema_name_in
-        UNION ALL
-        -- distributed hypertables
-        SELECT
-            dht.hypertable_name,
-            ch.compression_status,
-            ch.before_compression_total_bytes,
-            ch.after_compression_total_bytes,
-            dht.node_name
-        FROM SCHEMA_CATALOG.hypertable_node_up(schema_name_in) dht
-        LEFT OUTER JOIN LATERAL _timescaledb_internal.data_node_compressed_chunk_stats (
-            CASE WHEN dht.node_up THEN
-                dht.node_name
-            ELSE
-                NULL
-            END, schema_name_in, dht.hypertable_name) ch ON true
-        WHERE ch.chunk_name IS NOT NULL
-    ) ch
-    GROUP BY ch.hypertable_name
-$function$
-LANGUAGE sql
-STRICT STABLE 
-SECURITY DEFINER
---search path must be set for security definer
-SET search_path = pg_temp;
-REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(name) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(name) to prom_reader;
+DO $block$
+BEGIN
+    IF SCHEMA_CATALOG.is_timescaledb_installed() THEN
+        CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(schema_name_in name)
+        RETURNS TABLE(hypertable_name name, total_chunks bigint, number_compressed_chunks bigint, before_compression_total_bytes bigint, after_compression_total_bytes bigint)
+        AS $function$
+            SELECT
+                ch.hypertable_name,
+                count(*)::bigint AS total_chunks,
+                (count(*) FILTER (WHERE ch.compression_status = 'Compressed'))::bigint AS number_compressed_chunks,
+                sum(ch.before_compression_total_bytes)::bigint AS before_compression_total_bytes,
+                sum(ch.after_compression_total_bytes)::bigint AS after_compression_total_bytes
+            FROM
+            (
+                -- local hypertables
+                SELECT
+                    ch.hypertable_name,
+                    ch.compression_status,
+                    ch.uncompressed_total_size AS before_compression_total_bytes,
+                    ch.compressed_total_size AS after_compression_total_bytes,
+                    NULL::text AS node_name
+                FROM _timescaledb_internal.compressed_chunk_stats ch
+                WHERE ch.hypertable_schema = schema_name_in
+                UNION ALL
+                -- distributed hypertables
+                SELECT
+                    dht.hypertable_name,
+                    ch.compression_status,
+                    ch.before_compression_total_bytes,
+                    ch.after_compression_total_bytes,
+                    dht.node_name
+                FROM SCHEMA_CATALOG.hypertable_node_up(schema_name_in) dht
+                LEFT OUTER JOIN LATERAL _timescaledb_internal.data_node_compressed_chunk_stats (
+                    CASE WHEN dht.node_up THEN
+                        dht.node_name
+                    ELSE
+                        NULL
+                    END, schema_name_in, dht.hypertable_name) ch ON true
+                WHERE ch.chunk_name IS NOT NULL
+            ) ch
+            GROUP BY ch.hypertable_name
+        $function$
+        LANGUAGE sql
+        STRICT STABLE 
+        SECURITY DEFINER
+        --search path must be set for security definer
+        SET search_path = pg_temp;
+        REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(name) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_compression_stats(name) to prom_reader;
+    END IF;
+END;
+$block$
+;
 
 --------------------------------- Views --------------------------------
 

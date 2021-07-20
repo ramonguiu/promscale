@@ -2221,11 +2221,10 @@ REVOKE ALL ON FUNCTION SCHEMA_CATALOG.hypertable_node_up(name) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION SCHEMA_CATALOG.hypertable_node_up(name) to prom_reader;
 
 CREATE OR REPLACE FUNCTION SCHEMA_CATALOG.hypertable_remote_size(schema_name_in name)
-RETURNS TABLE(hypertable_name name, node_name name, table_bytes bigint, index_bytes bigint, toast_bytes bigint, total_bytes bigint)
+RETURNS TABLE(hypertable_name name, table_bytes bigint, index_bytes bigint, toast_bytes bigint, total_bytes bigint)
 AS $function$
     SELECT
         dht.hypertable_name,
-        dht.node_name,
         sum(x.table_bytes)::bigint AS table_bytes,
         sum(x.index_bytes)::bigint AS index_bytes,
         sum(x.toast_bytes)::bigint AS toast_bytes,
@@ -2237,7 +2236,7 @@ AS $function$
         ELSE
             NULL
         END, schema_name_in, dht.hypertable_name) x ON true
-    GROUP BY dht.hypertable_name, dht.node_name
+    GROUP BY dht.hypertable_name
 $function$
 LANGUAGE sql
 STRICT STABLE 
@@ -2370,14 +2369,18 @@ BEGIN
                 ci.total_interval,
                 hcs.before_compression_total_bytes::bigint,
                 hcs.after_compression_total_bytes::bigint,
-                coalesce(pcmvd.total_bytes::bigint, pcmvl.total_bytes::bigint) as total_size_bytes,
-                pg_size_pretty(coalesce(pcmvd.total_bytes::bigint, pcmvl.total_bytes::bigint)) as total_size,
+                hs.total_bytes::bigint as total_size_bytes,
+                pg_size_pretty(hs.total_bytes::bigint) as total_size,
                 (1.0 - (hcs.after_compression_total_bytes::NUMERIC / hcs.before_compression_total_bytes::NUMERIC)) * 100 as compression_ratio,
                 hcs.total_chunks::BIGINT,
                 hcs.number_compressed_chunks::BIGINT as compressed_chunks
             FROM SCHEMA_CATALOG.metric m
-            LEFT JOIN SCHEMA_CATALOG.hypertable_local_size('SCHEMA_DATA') pcmvl ON (pcmvl.hypertable_name = m.table_name)
-            LEFT JOIN SCHEMA_CATALOG.hypertable_remote_size('SCHEMA_DATA') pcmvd ON (pcmvd.hypertable_name = m.table_name)
+            LEFT JOIN 
+            (
+                SELECT * FROM SCHEMA_CATALOG.hypertable_local_size('SCHEMA_DATA')
+                UNION ALL
+                SELECT * FROM SCHEMA_CATALOG.hypertable_remote_size('SCHEMA_DATA')
+            ) hs ON (hs.hypertable_name = m.table_name)
             LEFT JOIN timescaledb_information.dimensions dims ON
                 (dims.hypertable_schema = 'SCHEMA_DATA' AND dims.hypertable_name = m.table_name)
             LEFT JOIN SCHEMA_CATALOG.hypertable_compression_stats('SCHEMA_DATA') hcs ON (hcs.hypertable_name = m.table_name)

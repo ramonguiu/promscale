@@ -18,9 +18,9 @@ require (
 	github.com/hashicorp/go-immutable-radix v1.2.0 // indirect
 	github.com/hashicorp/go-plugin v1.4.2
 	github.com/inhies/go-bytesize v0.0.0-20201103132853-d0aed0d254f8
-	github.com/jackc/pgconn v1.8.1
+	github.com/jackc/pgconn v1.10.1
 	github.com/jackc/pgerrcode v0.0.0-20190803225404-afa3381909a6
-	github.com/jackc/pgproto3/v2 v2.0.6
+	github.com/jackc/pgproto3/v2 v2.1.1
 	github.com/jackc/pgtype v1.4.2
 	github.com/jackc/pgx/v4 v4.8.0
 	github.com/jaegertracing/jaeger v1.26.0
@@ -37,7 +37,6 @@ require (
 	github.com/prometheus/prometheus v1.8.2-0.20210605142932-7bc11dcb0664
 	github.com/schollz/progressbar/v3 v3.7.2
 	github.com/sergi/go-diff v1.0.0
-	github.com/shurcooL/vfsgen v0.0.0-20200824052919-0d455de96546 // indirect
 	github.com/stretchr/testify v1.7.0
 	github.com/testcontainers/testcontainers-go v0.10.1-0.20210318151656-2bbeb1e04514
 	github.com/thanos-io/thanos v0.20.1

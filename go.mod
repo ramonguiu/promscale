@@ -8,7 +8,7 @@ require (
 	github.com/blang/semver/v4 v4.0.0
 	github.com/cespare/xxhash/v2 v2.1.2
 	github.com/containerd/cgroups v1.0.2
-	github.com/dekobon/distro-detect v0.0.0-20201122001546-5f5b9c724b9d // indirect
+	github.com/dekobon/distro-detect v0.0.0-20201122001546-5f5b9c724b9d
 	github.com/docker/go-connections v0.4.0
 	github.com/edsrzf/mmap-go v1.1.0
 	github.com/felixge/fgprof v0.9.2
@@ -43,7 +43,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.10.1-0.20210318151656-2bbeb1e04514
 	github.com/thanos-io/thanos v0.20.1
 	github.com/uber/jaeger-client-go v2.30.0+incompatible
-	go.opentelemetry.io/collector/model v0.42.0
+	go.opentelemetry.io/collector/model v0.43.1
 	go.uber.org/automaxprocs v1.4.0
 	go.uber.org/goleak v1.1.12
 	golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e

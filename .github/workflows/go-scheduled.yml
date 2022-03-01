@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Import environment variables
       run: cat ".github/env" >> $GITHUB_ENV
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         lfs: true
 
@@ -85,7 +85,7 @@ jobs:
         - {name: "TimescaleDB-Multinode Nightly (PG-13)",  ext: false, tsdb: true,  tsdb2: true,  multi: true,  pg: 13, nightly: true}
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         lfs: true
 
@@ -125,7 +125,7 @@ jobs:
     steps:
 
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Test helm chart static generation
       run: ./scripts/generate-deploy-script.sh

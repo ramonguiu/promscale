@@ -15,7 +15,7 @@ require (
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/snappy v0.0.4
 	github.com/google/uuid v1.3.0
-	github.com/gorilla/mux v1.8.0 // indirect
+	github.com/gorilla/mux v1.8.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/hashicorp/go-hclog v1.1.0
 	github.com/inhies/go-bytesize v0.0.0-20210819104631-275770b98743
@@ -24,8 +24,8 @@ require (
 	github.com/jackc/pgproto3/v2 v2.2.0
 	github.com/jackc/pgtype v1.10.0
 	github.com/jackc/pgx/v4 v4.15.1-0.20220219175125-b6b24f9e8a5d
-	github.com/jaegertracing/jaeger v1.31.0
-	github.com/oklog/run v1.1.0 // indirect
+	github.com/jaegertracing/jaeger v1.32.0
+	github.com/oklog/run v1.1.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/jaeger v0.46.0
 	github.com/opentracing-contrib/go-stdlib v1.0.0
 	github.com/opentracing/opentracing-go v1.2.0
@@ -52,7 +52,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.4.1
 	go.uber.org/automaxprocs v1.4.0
 	go.uber.org/goleak v1.1.12
-	golang.org/x/net v0.0.0-20220127200216-cd36cc0744dd // indirect
 	golang.org/x/sys v0.0.0-20220227234510-4e6760a101f9
 	google.golang.org/genproto v0.0.0-20220217155828-d576998c0009 // indirect
 	google.golang.org/grpc v1.44.0
